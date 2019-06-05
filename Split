@@ -1,0 +1,114 @@
+Sub Split()
+' The goal: get one row per semicolon,
+' duplicating all cells except the one with semicolons.
+
+Application.ScreenUpdating = False
+
+Dim preSplitData As String
+Dim postSplitData() As String   ' Splitting into multiple cells, so we need an array
+Dim a As Long
+Dim b As Long
+Dim c As Long
+Dim workingCell As Range        ' The particular cell being expanded
+Dim ws As Worksheet             ' The active worksheet.
+Dim lastCell As Range           ' Placeholder value to find the vertical dimension of the table
+Dim firstSetOfRows As Long      ' The number of rows with data before adding any additional rows
+Dim numberOfColumns As Long     ' The number of columns with data, according to the headers
+Dim oldDivider As String        ' Potentially multi-character substring that acts as a delimiter
+Dim divStr As String            ' Short for "divider substring"
+Dim currentRow As Range         ' The row of data currently being worked on in the outer loop.
+Dim nextRow As Range            ' The row of data that will be worked on next after the current row has been expanded.
+
+
+Set ws = ActiveSheet
+Set currentRow = Range("A2")
+    
+    With ws
+        ' Store what the last row with data is.
+        Set lastCell = .Cells(.Rows.Count, "A").End(xlUp)
+        firstSetOfRows = lastCell.Row
+        ' Store how many columns need to be checked for linebreaks - find the number of columns in row 1 that have data
+        Set lastCell = .Cells(1, .Columns.Count).End(xlToLeft)
+        numberOfColumns = lastCell.Column
+        ' Store the header row
+    End With
+
+oldDivider = ";"
+divStr = "skiv"     ' any short string that doesn't show up in the data will do.
+
+For a = 2 To firstSetOfRows
+    Dim maximumLineCount As Long    ' The number of additional rows to insert for this row. Only one in this case, but code reuse.
+        
+        ' Bookmark the next row to expand
+        Set nextRow = currentRow.Offset(1, 0)
+        maximumLineCount = 0
+        
+        ' First, replace all the oldDividers with divStr, then
+        ' Determine the maximum number of divStrs in the row
+        ' Should look like: (Len(cellValue) - Len(Replace(cellValue, divStr, ""))) / Len(divStr)
+        ' Once you've done that, add that many rows, without changing the actual selection
+        For b = 1 To numberOfColumns
+            Dim localCount As Long      ' variable for storing the number of dividers in this particular cell
+            
+            ws.Cells(currentRow.Row, b).Value = Replace(ws.Cells(currentRow.Row, b).Value, oldDivider, divStr)
+            
+            ' Count the number of divStrs in the cell
+            localCount = (Len(ws.Cells(currentRow.Row, b).Value) _
+                        - Len(Replace(ws.Cells(currentRow.Row, b).Value, divStr, ""))) _
+                        / Len(divStr)
+            
+            ' If the number of divStrs is higher than the current highest count, set the count to this number.
+            If localCount > maximumLineCount Then
+                maximumLineCount = localCount
+            End If
+        Next b
+        
+        ' Now add one row per divider, below the current row, to make room for all the data we'll be expanding out
+        For c = 1 To maximumLineCount
+            ws.Cells((currentRow.Row + 1), 1).EntireRow.Insert
+        Next c
+        
+        ' Go back to the first cell in the original row.
+        currentRow.Select
+        
+        ' Iterate through all the columns again.
+        For b = 0 To numberOfColumns
+            ' Pick out the current row cell in this column.
+            Set workingCell = currentRow.Offset(0, b)
+            preSplitData = workingCell.Value
+
+            ' If its contents contain divStr, split it up into an array. Filling in the new rows comes later.
+            If (Len(preSplitData) - Len(Replace(preSplitData, divStr, ""))) Then
+                postSplitData() = Split(preSplitData, divStr)
+    
+                For i = 0 To UBound(postSplitData)
+                    workingCell.Offset(i, 0).Value2 = Trim$(postSplitData(i))
+                Next i
+            End If
+        Next b
+        Set currentRow = nextRow
+    
+    Next a
+
+    ' Fill in the blanks - this duplicates text fields.
+
+    Dim ActualUsedRange As Range
+    Set ActualUsedRange = Range("A2").Resize(Cells.Find(what:="*", SearchOrder:=xlRows, _
+      SearchDirection:=xlPrevious, LookIn:=xlValues).Row, _
+      Cells.Find(what:="*", SearchOrder:=xlByColumns, _
+      SearchDirection:=xlPrevious, LookIn:=xlValues).Column)
+    
+    With ActualUsedRange
+     If .SpecialCells(xlCellTypeBlanks).Count > 0 Then
+     .SpecialCells(xlCellTypeBlanks).Formula = "=R[-1]C"    ' This gets everything filled in, but also adds an extra row at the end.
+                                                            ' Catch it later with duplicate detection.
+     .Value = .Value
+    End If
+
+    End With
+    
+    ws.Columns("A:K").RemoveDuplicates                      ' Beware, magic number-ish thing here. Include all your data columns.
+    
+Application.ScreenUpdating = True
+
+End Sub
