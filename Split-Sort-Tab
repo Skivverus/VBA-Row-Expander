@@ -1,0 +1,185 @@
+Sub SplitSortTab()
+' The goal: get one row per semicolon (or other delimiter),
+' duplicating all cells except the one with semicolons.
+' After that, sort the list, and create one tab for each category in that column you split (currently only splits from the first column).
+
+Application.ScreenUpdating = False
+
+Dim preSplitData As String
+Dim postSplitData() As String   ' Splitting into multiple cells, so we need an array
+Dim a As Long                   ' Loop variables.
+Dim b As Long
+Dim c As Long
+Dim workingCell As Range        ' The particular cell being expanded.
+Dim ws As Worksheet             ' The active worksheet.
+Dim lastCell As Range           ' Placeholder value to find the vertical dimension of the table
+Dim firstSetOfRows As Long      ' The number of rows with data before adding any additional rows
+Dim numberOfColumns As Long     ' The number of columns with data, according to the headers
+Dim oldDivider As String        ' Potentially multi-character substring that acts as a delimiter
+Dim divStr As String            ' Short for "divider substring"
+Dim currentRow As Range         ' The row of data currently being worked on in the outer loop.
+Dim nextRow As Range            ' The row of data that will be worked on next after the current row has been expanded.
+Dim dividerCheck As Boolean     ' Whether or not there were any dividers to split out.
+
+' Now to do a bit of code reuse.
+Set ws = ActiveSheet
+Set currentRow = Range("A2")
+dividerCheck = False            ' This is to prevent Excel from stopping with an error if there are no "real" blanks in your range.
+    
+    With ws
+        ' Store what the last row with data is.
+        Set lastCell = .Cells(.Rows.Count, "A").End(xlUp)
+        firstSetOfRows = lastCell.Row
+        ' Store how many columns need to be checked for linebreaks - find the number of columns in row 1 that have data
+        Set lastCell = .Cells(1, .Columns.Count).End(xlToLeft)
+        numberOfColumns = lastCell.Column
+        ' Store the header row
+    End With
+
+oldDivider = ";"    ' This is what Salesforce multi-select picklists use. InfoPath expanding tables use "Chr(10)", and your data might have something else.
+divStr = "skiv"     ' any short string that doesn't show up in the data will do. Mostly this is for debugging whitespace delimiters.
+
+For a = 2 To firstSetOfRows
+    Dim maximumLineCount As Long    ' The number of additional rows to insert for this row. Only one in this case, but code reuse.
+        
+        ' Bookmark the next row to expand
+        Set nextRow = currentRow.Offset(1, 0)
+        maximumLineCount = 0
+        
+        ' First, replace all the oldDividers with divStr, then
+        ' Determine the maximum number of divStrs in the row.
+        ' Should look like: (Len(cellValue) - Len(Replace(cellValue, divStr, ""))) / Len(divStr)
+        ' Once you've done that, add that many rows, without changing the actual selection.
+        For b = 1 To numberOfColumns
+            Dim localCount As Long      ' variable for storing the number of dividers in this particular cell.
+            
+            ws.Cells(currentRow.Row, b).Value = Replace(ws.Cells(currentRow.Row, b).Value, oldDivider, divStr)
+            
+            ' Count the number of divStrs in the cell
+            localCount = (Len(ws.Cells(currentRow.Row, b).Value) _
+                        - Len(Replace(ws.Cells(currentRow.Row, b).Value, divStr, ""))) _
+                        / Len(divStr)
+            
+            ' If the number of divStrs is higher than the current highest count, set the count to this number.
+            If localCount > 0 Then
+                dividerCheck = True
+            End If
+            
+            If localCount > maximumLineCount Then
+                maximumLineCount = localCount
+            End If
+        Next b
+        
+        ' Now add one row per divider, below the current row, to make room for all the data we'll be expanding out
+        For c = 1 To maximumLineCount
+            ws.Cells((currentRow.Row + 1), 1).EntireRow.Insert
+        Next c
+        
+        ' Go back to the first cell in the original row.
+        currentRow.Select
+        
+        ' Iterate through all the columns again.
+        For b = 0 To numberOfColumns
+            ' Pick out the current row cell in this column.
+            Set workingCell = currentRow.Offset(0, b)
+            preSplitData = workingCell.Value
+
+            ' If its contents contain divStr, split it up into an array. Filling in the new rows comes later.
+            If (Len(preSplitData) - Len(Replace(preSplitData, divStr, ""))) Then
+                postSplitData() = Split(preSplitData, divStr)
+    
+                For i = 0 To UBound(postSplitData)
+                    workingCell.Offset(i, 0).Value2 = Trim$(postSplitData(i))
+                Next i
+            End If
+        Next b
+        Set currentRow = nextRow
+    
+    Next a
+
+    ' Fill in the blanks - this duplicates text fields.
+
+    Dim ActualUsedRange As Range
+    Set ActualUsedRange = Range("A2").Resize(Cells.Find(what:="*", SearchOrder:=xlRows, _
+      SearchDirection:=xlPrevious, LookIn:=xlValues).Row, _
+      Cells.Find(what:="*", SearchOrder:=xlByColumns, _
+      SearchDirection:=xlPrevious, LookIn:=xlValues).Column)
+    
+    With ActualUsedRange
+    
+     If dividerCheck = True Then                                ' xlCellTypeBlanks throws an error if there aren't any blanks to fill
+     .SpecialCells(xlCellTypeBlanks).Formula = "=R[-1]C"    ' This gets everything filled in, but also adds an extra row at the end.
+                                                             ' Catch it later with duplicate detection.
+     .Value = .Value
+    
+    End If
+        ' Now, after all that, we need to re-sort the rows to distribute the newly-created rows
+         With ActiveSheet.Sort
+             .SortFields.Add Key:=Range("A1"), Order:=xlAscending
+             .SortFields.Add Key:=Range("B1"), Order:=xlAscending
+             .SetRange ActualUsedRange
+             .Header = xlYes
+             .Apply
+        End With
+    End With
+    
+    ' Now to cut-and-paste these rows into new sheets, at each change in the leftmost column.
+    ' The below is copy-pasted code from StackExchange, here: https://stackoverflow.com/a/38800138
+Dim rngMyRange As Range, rngCell As Range
+Dim sht As Worksheet
+Dim LastRow As Long
+Dim SheetName As String
+Dim TruncatedSheetName As String
+Dim firstRow As Range           ' The first row on the original sheet.
+
+With ws
+Set rngMyRange = .Range(.Range("a2"), .Range("A65536").End(xlUp)) ' A2 to avoid getting the header row
+Set firstRow = ws.Range("A1:K1")
+
+    For Each rngCell In rngMyRange
+
+        rngCell.EntireRow.Select
+
+        Selection.Copy
+
+        If (WorksheetExists(Left$(rngCell.Value, 30))) Then
+            SheetName = rngCell.Value
+            TruncatedSheetName = Left$(SheetName, 30)
+            Sheets(TruncatedSheetName).Select
+            Set sht = ActiveWorkbook.Worksheets(TruncatedSheetName)
+            LastRow = sht.Cells(sht.Rows.Count, "A").End(xlUp).Row
+            Rows(LastRow + 1).Select
+            Selection.Insert shift:=xlDown
+        Else
+            Sheets.Add After:=ActiveSheet
+            Rows("1:1").Select
+            Selection.Insert shift:=xlDown
+            ActiveSheet.Name = Left$(rngCell.Value, 30)
+            For a = 1 To numberOfColumns
+                ActiveSheet.Cells(1, a).Value2 = firstRow.Cells.Offset(0, (a - 1)).Value2
+            Next a
+        End If
+
+
+        'Go back to the DATA sheet
+        ws.Select
+    Next
+
+End With
+
+For Each ws In ActiveWorkbook.Worksheets
+    ws.Columns("A:K").AutoFit
+    ws.Columns("A:K").RemoveDuplicates
+    If (ws.AutoFilterMode = False) Then
+        ws.Columns("A:K").AutoFilter
+    End If
+Next
+
+Application.ScreenUpdating = True
+
+End Sub
+
+Function WorksheetExists(sName As String) As Boolean
+    WorksheetExists = Evaluate("ISREF('" & sName & "'!A1)")
+End Function
+
